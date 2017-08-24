@@ -54,7 +54,8 @@ class Redis_server:
         try:
             self.ip = socket.gethostbyname(self.host)
         except Exception as e:
-            l.error("Communication with %s:%d failed. %s"%(self.host, self.port, e.args[1]))
+            l.error("Communication with %s:%d failed. %s"\
+                    %(self.host, self.port, e.args[1]))
             exit(-1*e.args[0])
 
 
@@ -99,11 +100,22 @@ class Redis_server:
     def set_slaveof(self,master_host,master_port=None):
         master_port = self.port if master_port is None else master_port
         redis_command = "slaveof %s %d"%(master_host, master_port)
-        return netcat(self.host, self.port, redis_command)
+        resp = netcat(self.host, self.port, redis_command)
+        if resp.strip() != "+OK":
+            raise EnvironmentError(errno.EBADE,\
+                    "%s:%d Unexpected redis server response, %s"\
+                    %(self.host,self.port,resp))
+        print "Server %s:%d is now Slave of %s:%d"%(self.host,self.port,\
+                master_host,master_port)
 
     def set_master(self):
         redis_command = "slaveof NO ONE"
-        return netcat(self.host, self.port, redis_command)
+        resp = netcat(self.host, self.port, redis_command)
+        if resp.strip() != "+OK":
+            raise EnvironmentError(errno.EBADE,\
+                    "%s:%d Unexpected redis server response, %s"\
+                    %(self.host,self.port,resp))
+        print "Server %s:%d is now Master"%(self.host,self.port)
 
 class Redis_sentinel:
     def __init__(self, host, port=26379):
@@ -133,10 +145,12 @@ class Redis_sentinel:
         resp = "+OK"
         for m in self.get_masters().values():
             resp = netcat(self.host, self.port, redis_command_prefix + m["name"])
-        if resp.strip() != "+OK":
-            raise EnvironmentError(errno.EBADE,\
-                    "%s:%d Unexpected sentinel response (%s), %s"\
-                    %(self.host,self.port,master,resp))
+            if resp.strip() != "+OK":
+                raise EnvironmentError(errno.EBADE,\
+                        "%s:%d Unexpected sentinel response, %s"\
+                        %(self.host,self.port,resp))
+            print "Sentinel %s:%d does not monitor group %s anymore."\
+                    %(self.host,self.port,m["name"])
 
     def set_monitor(self, master_name, quorum, master_ip, master_port=None):
         master_port = self.port if master_port is None else master_port
@@ -145,6 +159,8 @@ class Redis_sentinel:
         resp = netcat(self.host, self.port, redis_command)
         if resp.strip() not in [ "+OK", "-ERR Duplicated master name" ]:
             raise EnvironmentError(errno.EBADE,"Unexpected sentinel response")
+        print "Sentinel %s:%d monitors group %s with quorum %d"\
+                %(master_ip,master_port,master_name,quorum)
 
 #### MAIN ####
 if __name__ == "__main__":
@@ -160,7 +176,8 @@ if __name__ == "__main__":
     p.add_argument("--sentinels",nargs="+",action="append",metavar="SENTINEL")
     p.add_argument("--groupmaster",default="redis",metavar="NAME",\
             help="master group name")
-    p.add_argument("-v",help="verbosity (repeat for more verbose log)",action="count",default=0)
+    p.add_argument("-v",help="verbosity (repeat for more verbose log)",\
+            action="count",default=0)
     p.add_argument("-stderr", help=argparse.SUPPRESS,action="store_true")
 
     args=p.parse_args()
@@ -171,7 +188,8 @@ if __name__ == "__main__":
 
     l = MyLogger(programname,args.stderr,args.v)
     servers = [Redis_server(item) for sublist in args.servers for item in sublist]
-    sentinels = [Redis_sentinel(item) for sublist in args.sentinels for item in sublist] if args.sentinels else []
+    sentinels = [Redis_sentinel(item) for sublist in\
+            args.sentinels for item in sublist] if args.sentinels else []
 
 # Sanity check on servers.
     master_count=0
@@ -208,7 +226,8 @@ if __name__ == "__main__":
             s.set_slaveof(servers[0].ip,servers[0].port)
 
 # Sanity check on sentinels
-# Each sentinel can monitor more masters, the basic check is that all sentinels have the same masters
+# Each sentinel can monitor more masters,
+# the basic check is that all sentinels have the same masters
 # which can be checked using md5
     check_sentinels = set()
     for s in sentinels:
